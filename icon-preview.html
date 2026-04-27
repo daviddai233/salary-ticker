@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>窝囊费 - App 图标选择</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #eee; font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif; padding: 40px; }
+  h1 { text-align: center; margin-bottom: 8px; font-size: 28px; }
+  .subtitle { text-align: center; color: #888; margin-bottom: 40px; font-size: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 30px; max-width: 900px; margin: 0 auto; }
+  .option { text-align: center; cursor: pointer; transition: transform 0.2s; }
+  .option:hover { transform: scale(1.05); }
+  .icon-preview {
+    width: 180px; height: 180px; border-radius: 40px;
+    margin: 0 auto 16px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+    display: flex; align-items: center; justify-content: center;
+    position: relative; overflow: hidden;
+  }
+  .option-label { font-size: 14px; color: #aaa; margin-top: 4px; }
+  .option-name { font-size: 18px; font-weight: 600; }
+  
+  /* Option A: Sad Goldfish in Bowl */
+  .icon-a { background: linear-gradient(135deg, #1a2744 0%, #2d4a7a 100%); }
+  .icon-a .fish-bowl { width: 120px; height: 100px; border: 3px solid rgba(255,255,255,0.3); border-radius: 0 0 60px 60px; border-top: none; position: relative; }
+  .icon-a .water { position: absolute; bottom: 0; left: 0; right: 0; height: 70px; background: rgba(100,180,255,0.2); border-radius: 0 0 57px 57px; }
+  .icon-a .goldfish { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); font-size: 40px; }
+  .icon-a .tear { position: absolute; bottom: 55px; left: calc(50% + 12px); font-size: 14px; animation: tearDrop 2s infinite; }
+  @keyframes tearDrop { 0%{opacity:1;transform:translateY(0)} 100%{opacity:0;transform:translateY(20px)} }
+
+  /* Option B: Exhausted Shrimp */
+  .icon-b { background: linear-gradient(135deg, #e8913a 0%, #f5d280 100%); }
+  .icon-b .shrimp-body { font-size: 64px; position: relative; }
+  .icon-b .id-badge { position: absolute; top: -8px; right: -20px; width: 28px; height: 22px; background: white; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.2); }
+  .icon-b .zzz { position: absolute; top: -20px; right: 10px; font-size: 16px; color: rgba(0,0,0,0.3); font-weight: bold; }
+  .icon-b .sweat { position: absolute; top: 5px; left: 10px; font-size: 12px; color: rgba(100,150,255,0.6); }
+
+  /* Option C: Wallet + Tear */
+  .icon-c { background: linear-gradient(135deg, #3a3a4a 0%, #5a5a6e 100%); }
+  .icon-c .wallet { width: 90px; height: 65px; background: #c8a45c; border-radius: 8px; position: relative; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+  .icon-c .wallet::before { content: ''; position: absolute; top: 25px; left: -8px; right: -8px; height: 15px; background: #b8944c; border-radius: 4px; }
+  .icon-c .wallet-clasp { position: absolute; top: 20px; right: -5px; width: 22px; height: 22px; background: #a07830; border-radius: 50%; border: 3px solid #c8a45c; }
+  .icon-c .coin-icon { position: absolute; top: -12px; right: -15px; font-size: 24px; }
+  .icon-c .wallet-tear { position: absolute; top: -18px; left: 30px; font-size: 16px; animation: tearDrop 2s infinite 0.5s; }
+  .icon-c .clock-overlay { position: absolute; bottom: -18px; right: -18px; font-size: 28px; color: rgba(255,255,255,0.7); }
+
+  /* Option D: Fish in Coffee Cup with Coins */
+  .icon-d { background: linear-gradient(135deg, #6dd5c4 0%, #2aaa8a 100%); }
+  .icon-d .coffee-cup { width: 80px; height: 75px; background: white; border-radius: 0 0 20px 20px; position: relative; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+  .icon-d .cup-rim { width: 90px; height: 8px; background: #ddd; border-radius: 4px; position: absolute; top: -4px; left: -5px; }
+  .icon-d .cup-handle { width: 18px; height: 25px; border: 3px solid #ddd; border-left: none; border-radius: 0 10px 10px 0; position: absolute; right: -20px; top: 12px; }
+  .icon-d .cup-fish { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); font-size: 32px; }
+  .icon-d .coin-float { position: absolute; font-size: 18px; }
+  .icon-d .coin1 { top: -15px; left: -10px; animation: floatCoin 3s infinite ease-in-out; }
+  .icon-d .coin2 { top: -10px; right: -12px; animation: floatCoin 3s infinite ease-in-out 1s; }
+  .icon-d .coin3 { top: -22px; left: 20px; animation: floatCoin 3s infinite ease-in-out 2s; }
+  @keyframes floatCoin { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
+  
+  /* Pixel art overlay for D */
+  .icon-d .pixel-grid { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.03) 3px, rgba(0,0,0,0.03) 6px); pointer-events: none; border-radius: 40px; }
+</style>
+</head>
+<body>
+
+<h1>🐟 窝囊费 — App 图标选择</h1>
+<p class="subtitle">选一个最能代表"打工人的窝囊感"的图标</p>
+
+<div class="grid">
+  
+  <!-- Option A -->
+  <div class="option" onclick="select(this, 'A')">
+    <div class="icon-preview icon-a">
+      <div class="fish-bowl">
+        <div class="water"></div>
+        <div class="goldfish">🐟</div>
+        <div class="tear">💧</div>
+      </div>
+    </div>
+    <div class="option-name">A. 鱼缸里的伤心鱼</div>
+    <div class="option-label">深蓝背景 · 鱼缸 · 泪滴</div>
+  </div>
+  
+  <!-- Option B -->
+  <div class="option" onclick="select(this, 'B')">
+    <div class="icon-preview icon-b">
+      <div class="shrimp-body">🦐</div>
+      <div class="id-badge">🎒</div>
+      <div class="zzz">💤</div>
+      <div class="sweat">💦</div>
+    </div>
+    <div class="option-name">B. 疲惫打工虾</div>
+    <div class="option-label">暖橙背景 · 工牌 · 疲惫</div>
+  </div>
+  
+  <!-- Option C -->
+  <div class="option" onclick="select(this, 'C')">
+    <div class="icon-preview icon-c">
+      <div class="wallet">
+        <div class="wallet-clasp"></div>
+        <div class="coin-icon">🪙</div>
+        <div class="wallet-tear">💧</div>
+        <div class="clock-overlay">⏰</div>
+      </div>
+    </div>
+    <div class="option-name">C. 钱包的眼泪</div>
+    <div class="option-label">深灰背景 · 钱包 · 时钟</div>
+  </div>
+  
+  <!-- Option D -->
+  <div class="option" onclick="select(this, 'D')">
+    <div class="icon-preview icon-d">
+      <div class="pixel-grid"></div>
+      <div class="coffee-cup">
+        <div class="cup-rim"></div>
+        <div class="cup-handle"></div>
+        <div class="cup-fish">🐟</div>
+      </div>
+      <div class="coin-float coin1">🪙</div>
+      <div class="coin-float coin2">💰</div>
+      <div class="coin-float coin3">🪙</div>
+    </div>
+    <div class="option-name">D. 咖啡杯里的鱼</div>
+    <div class="option-label">薄荷绿背景 · 咖啡杯 · 金币</div>
+  </div>
+
+</div>
+
+<script>
+function select(el, choice) {
+  document.querySelectorAll('.option').forEach(o => o.style.outline = 'none');
+  el.style.outline = '3px solid #4fc3f7';
+  alert('你选择了方案 ' + choice + '！');
+}
+</script>
+</body>
+</html>

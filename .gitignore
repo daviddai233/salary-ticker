@@ -1,0 +1,29 @@
+# Build artifacts
+build/
+.build/
+*.o
+*.d
+*.swiftmodule
+*.swiftdoc
+*.swiftsourceinfo
+*.pcm
+DerivedData/
+
+# Xcode
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# App bundle
+*.app
+
+# Icons build intermediate
+*.iconset/
+
+# Logs
+*.log
