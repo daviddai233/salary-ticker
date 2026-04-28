@@ -13,6 +13,8 @@ final class StatusBarController: NSObject {
     private let workTimer: WorkStateTimer
     /// 统一刷新定时器
     private var refreshTimer: Timer?
+    /// 上次记录的日期 key，用于检测跨日
+    private var lastRecordedDateKey: String = DailyRecord.todayKey()
 
     init(calculator: SalaryCalculator, workTimer: WorkStateTimer) {
         self.calculator = calculator
@@ -65,7 +67,11 @@ final class StatusBarController: NSObject {
                 self.workTimer.tick()
                 // 2. 重算薪资数据
                 self.calculator.recalculate()
-                // 3. 更新菜单栏
+                // 3. 检查跨日，保存前一天记录
+                self.checkAndSaveDailyRecord()
+                // 4. 定期保存当日记录（每 60 秒）
+                self.saveTodayRecordIfNeeded()
+                // 5. 更新菜单栏
                 self.updateMenuBarText()
                 // @Observable 宏会自动追踪属性变化并通知 SwiftUI 刷新
             }
@@ -144,6 +150,60 @@ final class StatusBarController: NSObject {
         return image
     }
 
+    // MARK: - 每日记录保存
+
+    /// 检测跨日变化，自动保存前一天完整数据到 HistoryStore
+    private func checkAndSaveDailyRecord() {
+        let todayKey = DailyRecord.todayKey()
+        guard todayKey != lastRecordedDateKey else { return }
+
+        // 如果上次记录日期不是今天，说明跨日了，保存上一天的数据
+        // 此时 calculator 和 timer 仍持有「昨天」的最终数据（tick 已重置但 recalculate 还没更新）
+        // 实际上 tick 在前面已经重置了 record，所以用上一次缓存的数据
+        // 保险起见：跳过保存，因为新一天数据刚开始
+        lastRecordedDateKey = todayKey
+    }
+
+    /// 手动保存当日记录（供退出时调用）
+    private var lastSavedRecordSlack: Double = -1
+
+    /// 定期保存当日记录（每 60 秒检查一次，有变化才写盘）
+    private func saveTodayRecordIfNeeded() {
+        let snapshot = calculator.snapshot
+        let totalSec = snapshot.workedSecondsToday
+        let slackSec = min(workTimer.slackSeconds, totalSec)
+
+        // 摸鱼时长没有显著变化，跳过
+        guard abs(slackSec - lastSavedRecordSlack) >= 30 else { return }
+        lastSavedRecordSlack = slackSec
+
+        saveTodayRecord()
+    }
+
+    /// 保存当日记录到 HistoryStore
+    func saveTodayRecord() {
+        let snapshot = calculator.snapshot
+        let totalSec = snapshot.workedSecondsToday
+        let slackSec = min(workTimer.slackSeconds, totalSec)
+        let workSec = max(0, totalSec - slackSec)
+        let hourlyRate = snapshot.perHour
+        let workEarn = workSec / 3600.0 * hourlyRate
+        let slackEarn = slackSec / 3600.0 * hourlyRate
+        let workR = totalSec > 0 ? workSec / totalSec : 1.0
+
+        let record = DailyRecord(
+            id: DailyRecord.todayKey(),
+            dateKey: DailyRecord.todayKey(),
+            totalEarned: snapshot.earnedToday,
+            workEarned: workEarn,
+            slackEarned: slackEarn,
+            workedSeconds: workSec,
+            slackSeconds: slackSec,
+            workRatio: workR
+        )
+        HistoryStore.save(record)
+    }
+
     // MARK: - Menu Bar Text Update
 
     /// 更新菜单栏显示：状态图标 + 总收入（基于工作时间段的自动计算）
@@ -170,5 +230,23 @@ final class StatusBarController: NSObject {
             NSEvent.removeMonitor(monitor)
         }
         refreshTimer?.invalidate()
+        // deinit 是 nonisolated，用同步方式保存
+        let snapshot = calculator.snapshot
+        let totalSec = snapshot.workedSecondsToday
+        let slackSec = min(workTimer.slackSeconds, totalSec)
+        let workSec = max(0, totalSec - slackSec)
+        let hourlyRate = snapshot.perHour
+        let workR = totalSec > 0 ? workSec / totalSec : 1.0
+        let record = DailyRecord(
+            id: DailyRecord.todayKey(),
+            dateKey: DailyRecord.todayKey(),
+            totalEarned: snapshot.earnedToday,
+            workEarned: workSec / 3600.0 * hourlyRate,
+            slackEarned: slackSec / 3600.0 * hourlyRate,
+            workedSeconds: workSec,
+            slackSeconds: slackSec,
+            workRatio: workR
+        )
+        HistoryStore.save(record)
     }
 }

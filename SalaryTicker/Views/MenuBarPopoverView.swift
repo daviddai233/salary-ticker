@@ -182,36 +182,70 @@ struct MenuBarPopoverView: View {
         .tint(timer.state == .working ? .green : .red)
     }
 
-    // MARK: - 底部按钮（设置 + 退出）
+    // MARK: - 底部按钮（记录 + 设置 + 退出）
+
+    /// 退出按钮是否 hover
+    @State private var isQuitHovered = false
 
     private var bottomButtons: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 0) {
+            Spacer()
+
+            Button {
+                openRecords()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "calendar")
+                    Text("记录")
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+
+            Spacer()
+
             Button {
                 openSettings()
             } label: {
-                Label("设置", systemImage: "gearshape")
-                    .frame(maxWidth: .infinity)
+                HStack(spacing: 4) {
+                    Image(systemName: "gearshape")
+                    Text("设置")
+                }
             }
-            .controlSize(.regular)
-            .buttonStyle(.bordered)
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+
+            Spacer()
 
             Button {
                 NSApp.terminate(nil)
             } label: {
-                Label("退出", systemImage: "xmark")
-                    .frame(maxWidth: .infinity)
+                HStack(spacing: 4) {
+                    Image(systemName: "xmark")
+                    Text("退出")
+                }
             }
-            .controlSize(.regular)
-            .buttonStyle(.bordered)
-            .tint(.red)
+            .buttonStyle(.plain)
+            .foregroundStyle(isQuitHovered ? .red : .secondary)
+            .onHover { hovering in
+                isQuitHovered = hovering
+            }
+
+            Spacer()
         }
+        .frame(height: 20)
     }
 
-    // MARK: - 通过 AppDelegate 打开设置窗口
+    // MARK: - 通过 AppDelegate 打开窗口
 
     private func openSettings() {
         guard let delegate = NSApp.delegate as? AppDelegate else { return }
         delegate.showSettingsWindow()
+    }
+
+    private func openRecords() {
+        guard let delegate = NSApp.delegate as? AppDelegate else { return }
+        delegate.showRecordsWindow(calculator: calculator, timer: timer)
     }
 
     // MARK: - 工具

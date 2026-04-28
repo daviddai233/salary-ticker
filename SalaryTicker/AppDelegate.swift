@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var workTimer: WorkStateTimer!
     private var welcomeWindowController: NSWindowController?
     private var settingsWindowController: NSWindowController?
+    private var recordsWindowController: NSWindowController?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 初始化计算引擎
@@ -29,6 +30,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false // 菜单栏 App 不随窗口关闭退出
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // 退出前保存当日记录
+        statusBarController?.saveTodayRecord()
     }
     
     // MARK: - 窗口管理
@@ -94,6 +100,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         settingsWindowController = NSWindowController(window: window)
         settingsWindowController?.showWindow(nil)
+        bringToFront(window)
+    }
+
+    /// 显示记录窗口
+    func showRecordsWindow(calculator: SalaryCalculator, timer: WorkStateTimer) {
+        if let wc = recordsWindowController {
+            wc.showWindow(nil)
+            bringToFront(wc.window!)
+            return
+        }
+
+        let recordsView = RecordsView(calculator: calculator, timer: timer)
+        let hosting = NSHostingController(rootView: recordsView)
+
+        let window = NSWindow(contentViewController: hosting)
+        window.title = "窝囊费 — 记录"
+        window.styleMask = [.titled, .closable, .resizable, .miniaturizable]
+        window.setContentSize(NSSize(width: 380, height: 560))
+        window.minSize = NSSize(width: 360, height: 480)
+        window.center()
+        window.isReleasedWhenClosed = false
+
+        recordsWindowController = NSWindowController(window: window)
+        recordsWindowController?.showWindow(nil)
         bringToFront(window)
     }
     
