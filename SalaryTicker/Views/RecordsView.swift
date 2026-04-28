@@ -86,7 +86,6 @@ struct RecordsView: View {
     private var calendarGrid: some View {
         let daysInMonth = numberOfDays(in: displayMonth)
         let firstWeekday = firstWeekdayOfMonth(displayMonth)
-        let calendar = Calendar.current
 
         return VStack(spacing: 6) {
             // 星期标题行
@@ -366,14 +365,21 @@ struct RecordsView: View {
         return f
     }
 
-    private let weekdaySymbols = ["日", "一", "二", "三", "四", "五", "六"]
+    private let weekdaySymbols = ["一", "二", "三", "四", "五", "六", "日"]
 
     private func numberOfDays(in date: Date) -> Int {
         Calendar.current.range(of: .day, in: .month, for: date)?.count ?? 30
     }
 
+    /// 返回该月1号在"周一起始"日历中的列偏移（0~6）
+    /// weekday: 1=Sun, 2=Mon, 3=Tue, 4=Wed, 5=Thu, 6=Fri, 7=Sat
+    /// 周一起始: Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
     private func firstWeekdayOfMonth(_ date: Date) -> Int {
-        Calendar.current.component(.weekday, from: date) - 1
+        guard let firstOfMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: date)) else {
+            return 0
+        }
+        let weekday = Calendar.current.component(.weekday, from: firstOfMonth)
+        return (weekday - 2 + 7) % 7
     }
 
     private func dateForDay(_ day: Int, in month: Date) -> Date {
