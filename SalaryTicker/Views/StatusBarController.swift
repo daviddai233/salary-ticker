@@ -15,6 +15,12 @@ final class StatusBarController: NSObject {
     private var refreshTimer: Timer?
     /// 上次记录的日期 key，用于检测跨日
     private var lastRecordedDateKey: String = DailyRecord.todayKey()
+    /// 上一次 tick 时的 snapshot 缓存（跨日用）
+    private var lastTickSnapshot: SalarySnapshot = SalarySnapshot(earnedToday: 0, workedSecondsToday: 0, perSecond: 0, perMinute: 0, perHour: 0, isWorking: false, statusText: "", progress: 0, remainingSeconds: 0)
+    /// 上一次 tick 时的 slack 缓存（跨日用）
+    private var lastTickSlackSeconds: Double = 0
+    /// 全天排班应工作秒数缓存（deinit 用，因为 deinit 无法访问 MainActor 的 calculator）
+    private var cachedFullDaySeconds: Double = 0
 
     init(calculator: SalaryCalculator, workTimer: WorkStateTimer) {
         self.calculator = calculator
@@ -26,8 +32,10 @@ final class StatusBarController: NSObject {
 
         super.init()
 
+        cachedFullDaySeconds = calculator.settings.schedule.totalWorkSeconds
         setupButton()
         setupPopover()
+        recoverPreviousDayIfNeeded()
         setupUnifiedTimer()
         setupEventMonitor()
     }
@@ -63,15 +71,28 @@ final class StatusBarController: NSObject {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                // 1. 驱动 WorkStateTimer 累加摸鱼时长
+                // 0. 先缓存当前数据（在 tick 重置之前，跨日时这是昨天的最终数据）
+                let prevDateKey = self.lastRecordedDateKey
+                let prevSnapshot = self.calculator.snapshot
+                let prevSlack = self.workTimer.slackSeconds
+                // 1. 驱动 WorkStateTimer 累加摸鱼时长（可能跨日重置）
                 self.workTimer.tick()
-                // 2. 重算薪资数据
+                // 2. 重算薪资数据（可能跨日重置）
                 self.calculator.recalculate()
-                // 3. 检查跨日，保存前一天记录
-                self.checkAndSaveDailyRecord()
-                // 4. 定期保存当日记录（每 60 秒）
+                // 3. 检查跨日，保存前一天记录（用缓存的数据）
+                let todayKey = DailyRecord.todayKey()
+                if todayKey != prevDateKey {
+                    self.saveRecord(dateKey: prevDateKey, snapshot: prevSnapshot, slackSeconds: prevSlack)
+                    print("[StatusBarController] 跨日保存：\(prevDateKey) -> 总计 ¥\(String(format: "%.2f", prevSnapshot.earnedToday))")
+                    self.lastRecordedDateKey = todayKey
+                }
+                // 4. 缓存当前 tick 数据（供 deinit 使用）
+                self.lastTickSnapshot = self.calculator.snapshot
+                self.lastTickSlackSeconds = self.workTimer.slackSeconds
+                self.cachedFullDaySeconds = self.calculator.settings.schedule.totalWorkSeconds
+                // 5. 定期保存当日记录（每 60 秒）
                 self.saveTodayRecordIfNeeded()
-                // 5. 更新菜单栏
+                // 6. 更新菜单栏
                 self.updateMenuBarText()
                 // @Observable 宏会自动追踪属性变化并通知 SwiftUI 刷新
             }
@@ -152,51 +173,89 @@ final class StatusBarController: NSObject {
 
     // MARK: - 每日记录保存
 
-    /// 检测跨日变化，自动保存前一天完整数据到 HistoryStore
-    private func checkAndSaveDailyRecord() {
-        let todayKey = DailyRecord.todayKey()
-        guard todayKey != lastRecordedDateKey else { return }
+    /// 启动时恢复前一天数据（如果 app 退出时没来得及保存）
+    private func recoverPreviousDayIfNeeded() {
+        guard let prevDateKey = workTimer.previousDateKey else { return }
+        // 如果 HistoryStore 已有该天记录，说明退出时已成功保存，跳过
+        guard HistoryStore.get(dateKey: prevDateKey) == nil else { return }
+        // 没有记录 → 用旧 slackSeconds + calculator 的全天数据恢复
+        // 此时 calculator 已经 recalculate 过（当前是新一天），但 perHour 不变
+        let schedule = calculator.settings.schedule
+        let totalSec = schedule.totalWorkSeconds  // 已下班 = 全天排班时长
+        let slackSec = min(workTimer.previousSlackSeconds, totalSec)
+        let workSec = max(0, totalSec - slackSec)
+        let hourlyRate = calculator.settings.monthlySalary / schedule.monthlyWorkSeconds
+        let workR = totalSec > 0 ? workSec / totalSec : 1.0
 
-        // 如果上次记录日期不是今天，说明跨日了，保存上一天的数据
-        // 此时 calculator 和 timer 仍持有「昨天」的最终数据（tick 已重置但 recalculate 还没更新）
-        // 实际上 tick 在前面已经重置了 record，所以用上一次缓存的数据
-        // 保险起见：跳过保存，因为新一天数据刚开始
-        lastRecordedDateKey = todayKey
+        let record = DailyRecord(
+            id: prevDateKey,
+            dateKey: prevDateKey,
+            totalEarned: totalSec / 3600.0 * hourlyRate,
+            workEarned: workSec / 3600.0 * hourlyRate,
+            slackEarned: slackSec / 3600.0 * hourlyRate,
+            workedSeconds: workSec,
+            slackSeconds: slackSec,
+            workRatio: workR
+        )
+        HistoryStore.save(record)
+        print("[StatusBarController] 启动恢复前一天记录：\(prevDateKey) -> 总计 ¥\(String(format: "%.2f", record.totalEarned))")
     }
 
-    /// 手动保存当日记录（供退出时调用）
-    private var lastSavedRecordSlack: Double = -1
+    /// 上次保存的总工作时长快照（用于定期保存判断）
+    private var lastSavedWorkedSeconds: Double = -1
 
     /// 定期保存当日记录（每 60 秒检查一次，有变化才写盘）
     private func saveTodayRecordIfNeeded() {
         let snapshot = calculator.snapshot
         let totalSec = snapshot.workedSecondsToday
-        let slackSec = min(workTimer.slackSeconds, totalSec)
 
-        // 摸鱼时长没有显著变化，跳过
-        guard abs(slackSec - lastSavedRecordSlack) >= 30 else { return }
-        lastSavedRecordSlack = slackSec
+        // 总工作时长没有显著变化（至少 60 秒），跳过
+        // 无论工作还是摸鱼状态，工作时间每秒都在流逝，所以用总时长判断最可靠
+        guard totalSec > 0 && abs(totalSec - lastSavedWorkedSeconds) >= 60 else { return }
+        lastSavedWorkedSeconds = totalSec
 
         saveTodayRecord()
     }
 
-    /// 保存当日记录到 HistoryStore
+    /// 保存当日记录到 HistoryStore（使用实时数据，已过下班时间则用全天满额兜底）
     func saveTodayRecord() {
         let snapshot = calculator.snapshot
-        let totalSec = snapshot.workedSecondsToday
-        let slackSec = min(workTimer.slackSeconds, totalSec)
-        let workSec = max(0, totalSec - slackSec)
+        // 如果已下班（progress == 1.0 或 workedSeconds == totalWorkSeconds），直接用满额
+        // 否则用实时工作秒数
+        let slackSec = min(workTimer.slackSeconds, snapshot.workedSecondsToday)
+        saveRecord(dateKey: DailyRecord.todayKey(), snapshot: snapshot, slackSeconds: slackSec)
+    }
+
+    /// 保存指定日期的记录（内部通用方法）
+    /// - 工作日：workedSeconds 取「实际工时」与「全天排班时长」的较大值
+    ///   确保退出时未到下班的中间数据，不会比全天满额还少（工资按天发）
+    /// - 摸鱼时长保留原始值，不做放大
+    private func saveRecord(dateKey: String, snapshot: SalarySnapshot, slackSeconds: Double) {
+        let schedule = calculator.settings.schedule
+        let fullDaySec = schedule.totalWorkSeconds      // 全天排班应工作秒数
+        let perSecond = snapshot.perSecond              // 每秒工资（从 snapshot 取，perSecond 不因跨日变化）
         let hourlyRate = snapshot.perHour
-        let workEarn = workSec / 3600.0 * hourlyRate
-        let slackEarn = slackSec / 3600.0 * hourlyRate
-        let workR = totalSec > 0 ? workSec / totalSec : 1.0
+
+        // 实际工时（来自 snapshot，可能是下班前的不完整值）
+        let actualSec = snapshot.workedSecondsToday
+
+        // 判断当天是否应算工作日（只要 perSecond > 0 且 fullDaySec > 0 就算）
+        let isWorkDay = fullDaySec > 0 && perSecond > 0
+
+        // 工时取较大值：如果是工作日，保底用全天满额（避免提前退出导致记录偏低）
+        let effectiveSec = isWorkDay ? max(actualSec, fullDaySec) : actualSec
+
+        let slackSec = min(slackSeconds, effectiveSec)
+        let workSec = max(0, effectiveSec - slackSec)
+        let workR = effectiveSec > 0 ? workSec / effectiveSec : 1.0
+        let totalEarned = effectiveSec * perSecond
 
         let record = DailyRecord(
-            id: DailyRecord.todayKey(),
-            dateKey: DailyRecord.todayKey(),
-            totalEarned: snapshot.earnedToday,
-            workEarned: workEarn,
-            slackEarned: slackEarn,
+            id: dateKey,
+            dateKey: dateKey,
+            totalEarned: totalEarned,
+            workEarned: workSec / 3600.0 * hourlyRate,
+            slackEarned: slackSec / 3600.0 * hourlyRate,
             workedSeconds: workSec,
             slackSeconds: slackSec,
             workRatio: workR
@@ -230,17 +289,26 @@ final class StatusBarController: NSObject {
             NSEvent.removeMonitor(monitor)
         }
         refreshTimer?.invalidate()
-        // deinit 是 nonisolated，用同步方式保存
-        let snapshot = calculator.snapshot
-        let totalSec = snapshot.workedSecondsToday
-        let slackSec = min(workTimer.slackSeconds, totalSec)
-        let workSec = max(0, totalSec - slackSec)
-        let hourlyRate = snapshot.perHour
-        let workR = totalSec > 0 ? workSec / totalSec : 1.0
+        // deinit 是 nonisolated，用缓存的最终数据保存
+        let dateKey = lastRecordedDateKey
+        let actualSec = lastTickSnapshot.workedSecondsToday
+        // 只在有实际工作时长时才保存，避免覆盖已有记录
+        guard actualSec > 0 else { return }
+
+        let perSecond = lastTickSnapshot.perSecond
+        let hourlyRate = lastTickSnapshot.perHour
+        // 全天满额兜底：工作日取全天排班时长的较大值
+        let isWorkDay = cachedFullDaySeconds > 0 && perSecond > 0
+        let effectiveSec = isWorkDay ? max(actualSec, cachedFullDaySeconds) : actualSec
+
+        let slackSec = min(lastTickSlackSeconds, effectiveSec)
+        let workSec = max(0, effectiveSec - slackSec)
+        let workR = effectiveSec > 0 ? workSec / effectiveSec : 1.0
+        let totalEarned = effectiveSec * perSecond
         let record = DailyRecord(
-            id: DailyRecord.todayKey(),
-            dateKey: DailyRecord.todayKey(),
-            totalEarned: snapshot.earnedToday,
+            id: dateKey,
+            dateKey: dateKey,
+            totalEarned: totalEarned,
             workEarned: workSec / 3600.0 * hourlyRate,
             slackEarned: slackSec / 3600.0 * hourlyRate,
             workedSeconds: workSec,
@@ -248,5 +316,6 @@ final class StatusBarController: NSObject {
             workRatio: workR
         )
         HistoryStore.save(record)
+        print("[StatusBarController] deinit 保存：\(dateKey), eff=\(effectiveSec)s")
     }
 }

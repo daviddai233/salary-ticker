@@ -71,10 +71,16 @@ class WorkStateTimer {
     private static let storeKey = "work_state_timer"
     /// 上次持久化的 slack 秒数，避免频繁写盘
     private var lastSavedSlack: Double
+    /// 启动时加载的旧记录日期 key（用于启动时恢复前一天数据）
+    let previousDateKey: String?
+    /// 启动时加载的旧记录的摸鱼秒数（用于启动时恢复前一天数据）
+    let previousSlackSeconds: Double
 
     init() {
-        let loadedRecord = WorkStateTimer.loadRecord()
+        let (loadedRecord, prevKey, prevSlack) = WorkStateTimer.loadRecord()
         self.record = loadedRecord
+        self.previousDateKey = prevKey
+        self.previousSlackSeconds = prevSlack
         self.lastSavedSlack = loadedRecord.slackSeconds
     }
 
@@ -95,10 +101,12 @@ class WorkStateTimer {
     func tick() {
         let todayKey = DayTimeRecord.todayKey()
 
-        // 日期变了，重置
+        // 日期变了，重置，并立即写盘（避免下次冷启动时 loadRecord 读到旧 dateKey）
         if record.dateKey != todayKey {
             record = DayTimeRecord.empty(state: .working)
             lastSavedSlack = 0
+            flushSave()
+            return
         }
 
         // 只有摸鱼状态才累加摸鱼时长
@@ -124,15 +132,20 @@ class WorkStateTimer {
         }
     }
 
-    private static func loadRecord() -> DayTimeRecord {
+    private static func loadRecord() -> (record: DayTimeRecord, previousDateKey: String?, previousSlackSeconds: Double) {
         guard let data = UserDefaults.standard.data(forKey: storeKey) else {
-            return .empty()
+            return (.empty(), nil, 0)
         }
         do {
             var loaded = try JSONDecoder().decode(DayTimeRecord.self, from: data)
             let todayKey = DayTimeRecord.todayKey()
+            var previousDateKey: String? = nil
+            var previousSlackSeconds: Double = 0
 
             if loaded.dateKey != todayKey {
+                // 保存旧数据信息，供调用者恢复前一天记录
+                previousDateKey = loaded.dateKey
+                previousSlackSeconds = loaded.slackSeconds
                 loaded = .empty(state: .working)
             } else {
                 // 同一天，补算从上次退出到现在（仅摸鱼状态补算）
@@ -147,10 +160,10 @@ class WorkStateTimer {
                     loaded.stateChangedAt = Date().timeIntervalSince1970
                 }
             }
-            return loaded
+            return (loaded, previousDateKey, previousSlackSeconds)
         } catch {
             print("[WorkStateTimer] 解码失败: \(error)")
-            return .empty()
+            return (.empty(), nil, 0)
         }
     }
 }

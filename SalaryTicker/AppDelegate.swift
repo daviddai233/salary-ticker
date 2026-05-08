@@ -22,6 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         setupMainMenu()
         
+        // 清理脏数据（启动时一次性）
+        cleanupStaleRecords()
+
         // 启动后短暂延迟再弹窗，确保 App 完全就绪
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.showInitialWindow()
@@ -37,6 +40,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBarController?.saveTodayRecord()
     }
     
+    // MARK: - 数据清理
+
+    /// 清理脏数据，并修正因提前退出导致工时不足全天的历史记录
+    private func cleanupStaleRecords() {
+        // 1. 删除已知空记录（workedSeconds == 0 的周末误写记录）
+        let staleDates = ["2026-04-27", "2026-04-28", "2026-05-02", "2026-05-03"]
+        for dateKey in staleDates {
+            if let record = HistoryStore.get(dateKey: dateKey), record.workedSeconds == 0 {
+                HistoryStore.delete(dateKey: dateKey)
+                print("[AppDelegate] 清理空记录：\(dateKey)")
+            }
+        }
+
+        // 2. 修正 5/7 记录（因提前退出导致工时只有 4h59m，应为全天满额 6h30m）
+        let fullDaySec = calculator.settings.schedule.totalWorkSeconds
+        let perSecond = calculator.settings.monthlySalary / calculator.settings.schedule.monthlyWorkSeconds
+        let hourlyRate = perSecond * 3600
+
+        let fixDates = ["2026-05-07"]
+        for dateKey in fixDates {
+            guard let existing = HistoryStore.get(dateKey: dateKey) else { continue }
+            let total = existing.workedSeconds + existing.slackSeconds
+            // 只修正总工时明显不足全天的记录（< 全天 90%）
+            guard total < fullDaySec * 0.9 else { continue }
+            let slackSec = existing.slackSeconds
+            let workSec = max(0, fullDaySec - slackSec)
+            let workR = fullDaySec > 0 ? workSec / fullDaySec : 1.0
+            let fixed = DailyRecord(
+                id: dateKey,
+                dateKey: dateKey,
+                totalEarned: fullDaySec * perSecond,
+                workEarned: workSec / 3600.0 * hourlyRate,
+                slackEarned: slackSec / 3600.0 * hourlyRate,
+                workedSeconds: workSec,
+                slackSeconds: slackSec,
+                workRatio: workR
+            )
+            HistoryStore.save(fixed)
+            print("[AppDelegate] 修正不足全天记录：\(dateKey) \(total)s -> \(fullDaySec)s")
+        }
+    }
+
     // MARK: - 窗口管理
     
     /// 根据状态显示初始窗口
