@@ -21,6 +21,8 @@ final class StatusBarController: NSObject {
     private var lastTickSlackSeconds: Double = 0
     /// 全天排班应工作秒数缓存（deinit 用，因为 deinit 无法访问 MainActor 的 calculator）
     private var cachedFullDaySeconds: Double = 0
+    /// 是否含周末的缓存（deinit 用）
+    private var cachedIncludeWeekends: Bool = false
 
     init(calculator: SalaryCalculator, workTimer: WorkStateTimer) {
         self.calculator = calculator
@@ -33,6 +35,7 @@ final class StatusBarController: NSObject {
         super.init()
 
         cachedFullDaySeconds = calculator.settings.schedule.totalWorkSeconds
+        cachedIncludeWeekends = calculator.settings.schedule.includeWeekends
         setupButton()
         setupPopover()
         recoverPreviousDayIfNeeded()
@@ -90,6 +93,7 @@ final class StatusBarController: NSObject {
                 self.lastTickSnapshot = self.calculator.snapshot
                 self.lastTickSlackSeconds = self.workTimer.slackSeconds
                 self.cachedFullDaySeconds = self.calculator.settings.schedule.totalWorkSeconds
+                self.cachedIncludeWeekends = self.calculator.settings.schedule.includeWeekends
                 // 5. 定期保存当日记录（每 60 秒）
                 self.saveTodayRecordIfNeeded()
                 // 6. 更新菜单栏
@@ -219,19 +223,38 @@ final class StatusBarController: NSObject {
 
     /// 保存当日记录到 HistoryStore（使用实时数据，已过下班时间则用全天满额兜底）
     func saveTodayRecord() {
+        let dateKey = DailyRecord.todayKey()
+        // 周末不记录
+        guard !Self.isWeekend(dateKey: dateKey, schedule: calculator.settings.schedule) else { return }
         let snapshot = calculator.snapshot
-        // 如果已下班（progress == 1.0 或 workedSeconds == totalWorkSeconds），直接用满额
-        // 否则用实时工作秒数
         let slackSec = min(workTimer.slackSeconds, snapshot.workedSecondsToday)
-        saveRecord(dateKey: DailyRecord.todayKey(), snapshot: snapshot, slackSeconds: slackSec)
+        saveRecord(dateKey: dateKey, snapshot: snapshot, slackSeconds: slackSec)
+    }
+
+    /// 判断某个 dateKey (yyyy-MM-dd) 是否是周末（Saturday/Sunday），且未配置 includeWeekends
+    nonisolated static func isWeekend(dateKey: String, schedule: WorkSchedule) -> Bool {
+        guard !schedule.includeWeekends else { return false }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        guard let date = formatter.date(from: dateKey) else { return false }
+        let weekday = Calendar.current.component(.weekday, from: date) // 1=Sun, 7=Sat
+        return weekday == 1 || weekday == 7
     }
 
     /// 保存指定日期的记录（内部通用方法）
     /// - 工作日：workedSeconds 取「实际工时」与「全天排班时长」的较大值
     ///   确保退出时未到下班的中间数据，不会比全天满额还少（工资按天发）
     /// - 摸鱼时长保留原始值，不做放大
+    /// - 周末直接跳过不写记录
     private func saveRecord(dateKey: String, snapshot: SalarySnapshot, slackSeconds: Double) {
         let schedule = calculator.settings.schedule
+        // 周末不记录
+        guard !Self.isWeekend(dateKey: dateKey, schedule: schedule) else {
+            print("[StatusBarController] 跳过周末记录：\(dateKey)")
+            return
+        }
+
         let fullDaySec = schedule.totalWorkSeconds      // 全天排班应工作秒数
         let perSecond = snapshot.perSecond              // 每秒工资（从 snapshot 取，perSecond 不因跨日变化）
         let hourlyRate = snapshot.perHour
@@ -239,7 +262,7 @@ final class StatusBarController: NSObject {
         // 实际工时（来自 snapshot，可能是下班前的不完整值）
         let actualSec = snapshot.workedSecondsToday
 
-        // 判断当天是否应算工作日（只要 perSecond > 0 且 fullDaySec > 0 就算）
+        // 判断当天是否应算工作日（perSecond > 0 且 fullDaySec > 0，且不是周末）
         let isWorkDay = fullDaySec > 0 && perSecond > 0
 
         // 工时取较大值：如果是工作日，保底用全天满额（避免提前退出导致记录偏低）
@@ -294,6 +317,20 @@ final class StatusBarController: NSObject {
         let actualSec = lastTickSnapshot.workedSecondsToday
         // 只在有实际工作时长时才保存，避免覆盖已有记录
         guard actualSec > 0 else { return }
+
+        // 周末不记录（用缓存的 includeWeekends，因为 deinit 无法访问 calculator）
+        let schedule = WorkSchedule(
+            startHour: 9, startMinute: 0,
+            endHour: 18, endMinute: 0,
+            lunchStartHour: 12, lunchStartMinute: 0,
+            lunchEndHour: 13, lunchEndMinute: 0,
+            workDaysPerMonth: 22,
+            includeWeekends: cachedIncludeWeekends
+        )
+        if StatusBarController.isWeekend(dateKey: dateKey, schedule: schedule) {
+            print("[StatusBarController] deinit 跳过周末记录：\(dateKey)")
+            return
+        }
 
         let perSecond = lastTickSnapshot.perSecond
         let hourlyRate = lastTickSnapshot.perHour

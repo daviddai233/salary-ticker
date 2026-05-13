@@ -53,7 +53,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // 2. 修正 5/7 记录（因提前退出导致工时只有 4h59m，应为全天满额 6h30m）
+        // 2. 清理所有周末记录（无论有无数据，周末不应有记录）
+        let schedule = calculator.settings.schedule
+        let allRecords = HistoryStore.loadSorted()
+        for record in allRecords {
+            if StatusBarController.isWeekend(dateKey: record.dateKey, schedule: schedule) {
+                HistoryStore.delete(dateKey: record.dateKey)
+                print("[AppDelegate] 清理周末记录：\(record.dateKey)")
+            }
+        }
+
+        // 3. 修正 5/7 记录（因提前退出导致工时只有 4h59m，应为全天满额 6h30m）
         let fullDaySec = calculator.settings.schedule.totalWorkSeconds
         let perSecond = calculator.settings.monthlySalary / calculator.settings.schedule.monthlyWorkSeconds
         let hourlyRate = perSecond * 3600
