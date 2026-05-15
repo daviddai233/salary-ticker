@@ -148,17 +148,18 @@ class WorkStateTimer {
                 previousSlackSeconds = loaded.slackSeconds
                 loaded = .empty(state: .working)
             } else {
-                // 同一天，补算从上次退出到现在（仅摸鱼状态补算）
-                let elapsed = Date().timeIntervalSince1970 - loaded.stateChangedAt
-                if elapsed > 1 && loaded.currentState == .slacking {
-                    loaded.slackSeconds += floor(elapsed)
-                    loaded.stateChangedAt = Date().timeIntervalSince1970
+                // 同一天，不补算摸鱼时长（避免跨下班时间误算大量摸鱼）
+                // 只重置 stateChangedAt 防止下次启动时再次误算
+
+                // 安全 clamp：摸鱼时长不应超过当天最大工作时长（6.5h = 23400s）
+                // 防止之前补算 bug 导致的膨胀数据
+                let maxPossibleSlack = 23400.0  // 6.5h，对应 9:00-18:00 扣 2.5h 午休
+                if loaded.slackSeconds > maxPossibleSlack {
+                    loaded.slackSeconds = maxPossibleSlack
+                    print("[WorkStateTimer] clamp 膨胀的 slackSeconds -> \(maxPossibleSlack)")
                 }
-                // 保护：补算后如果状态已切回工作，将 stateChangedAt 更新为当前时间
-                // 避免下次启动时误判
-                if loaded.currentState == .working {
-                    loaded.stateChangedAt = Date().timeIntervalSince1970
-                }
+
+                loaded.stateChangedAt = Date().timeIntervalSince1970
             }
             return (loaded, previousDateKey, previousSlackSeconds)
         } catch {
